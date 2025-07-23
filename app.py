@@ -17,7 +17,7 @@ api_key = get_api_key()
 client = OpenAI(api_key=api_key)
 
 # System prompt
-epr_system = """
+SYSTEM_PROMPT = """
 You are an expert YouTube Shorts strategist and editor. Your specialty is converting long-form interviews, podcasts, or conversational transcripts into short-form, high-retention, share-worthy video clips (30–60 seconds).
 
 Your task is to analyze the provided transcript and identify segments that can be crafted into **viral YouTube Shorts**, using both:
@@ -127,10 +127,9 @@ if uploaded_file:
         )
 
         # Download as Word-compatible RTF
-        # Build RTF content to avoid python-docx import issues
         rtf_lines = []
         for line in result.split("\n"):
-            escaped = line.replace('\\', '\\\\').replace('{', '\{').replace('}', '\}')
+            escaped = line.replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
             rtf_lines.append(escaped + "\\par")
         rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"
         rtf_bytes = rtf_content.encode("utf-8")

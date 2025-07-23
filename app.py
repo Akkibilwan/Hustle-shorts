@@ -1,7 +1,7 @@
 import streamlit as st
 import io
 from openai import OpenAI
-import openai
+from openai.error import InvalidRequestError
 
 # ----------
 # Helper Functions
@@ -125,7 +125,7 @@ def generate_shorts(transcript: str, count: int, model_name: str):
             max_tokens=1500
         )
         return resp.choices[0].message.content
-    except openai.error.InvalidRequestError as e:
+    except InvalidRequestError:
         st.error(f"Model '{model_name}' not available. Please select a different model.")
         return None
     except Exception as e:
@@ -154,7 +154,7 @@ if uploaded_file:
             # Download RTF as .doc
             rtf_lines = []
             for line in result.split("\n"):
-                escaped = line.replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
+                escaped = line.replace('\\', '\\\\').replace('{', '\\\{').replace('}', '\\\}')
                 rtf_lines.append(escaped + "\\par")
             rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"
             st.download_button(

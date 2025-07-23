@@ -93,11 +93,10 @@ uploaded_file = st.file_uploader("Upload transcript (.srt or .txt)", type=["srt"
 result_count = st.slider("Number of Shorts to generate", min_value=1, max_value=20, value=5)
 
 # Model selection
-model = st.selectbox("Choose model", ["gpt-4.5", "gpt-4", "gpt-3.5-turbo"], index=0)
+model = st.selectbox("Choose model", ["gpt-4", "gpt-3.5-turbo"], index=0)
 
 def generate_shorts(transcript: str, count: int):
     system = {"role": "system", "content": SYSTEM_PROMPT}
-    # Append count requirement
     user_content = transcript + f"\n\nPlease generate {count} unique potential shorts in the specified format."
     user = {"role": "user", "content": user_content}
     response = client.chat.completions.create(

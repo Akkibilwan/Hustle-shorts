@@ -1,6 +1,7 @@
 import streamlit as st
 import io
 from openai import OpenAI
+import openai
 
 # ----------
 # Helper Functions
@@ -15,6 +16,21 @@ def get_api_key() -> str:
 # Initialize OpenAI client
 api_key = get_api_key()
 client = OpenAI(api_key=api_key)
+
+@st.cache_data(show_spinner=False)
+def fetch_models():
+    """Fetch available GPT models, fallback to defaults on error."""
+    try:
+        resp = client.models.list()
+        models = [m.id for m in resp.data if m.id.startswith("gpt-")]
+        # ensure at least gpt-4 and gpt-3.5-turbo
+        defaults = ["gpt-4", "gpt-3.5-turbo"]
+        for d in defaults:
+            if d not in models:
+                models.append(d)
+        return sorted(models)
+    except Exception:
+        return ["gpt-4", "gpt-3.5-turbo"]
 
 # System prompt
 SYSTEM_PROMPT = """
@@ -93,48 +109,57 @@ uploaded_file = st.file_uploader("Upload transcript (.srt or .txt)", type=["srt"
 result_count = st.slider("Number of Shorts to generate", min_value=1, max_value=20, value=5)
 
 # Model selection
-model = st.selectbox("Choose model", ["gpt-4", "gpt-3.5-turbo"], index=0)
+available_models = fetch_models()
+model = st.selectbox("Choose model", available_models, index=0)
 
-def generate_shorts(transcript: str, count: int):
+# Generate function
+def generate_shorts(transcript: str, count: int, model_name: str):
     system = {"role": "system", "content": SYSTEM_PROMPT}
     user_content = transcript + f"\n\nPlease generate {count} unique potential shorts in the specified format."
     user = {"role": "user", "content": user_content}
-    response = client.chat.completions.create(
-        model=model,
-        messages=[system, user],
-        temperature=0.7,
-        max_tokens=1500
-    )
-    return response.choices[0].message.content
+    try:
+        resp = client.chat.completions.create(
+            model=model_name,
+            messages=[system, user],
+            temperature=0.7,
+            max_tokens=1500
+        )
+        return resp.choices[0].message.content
+    except openai.error.InvalidRequestError as e:
+        st.error(f"Model '{model_name}' not available. Please select a different model.")
+        return None
+    except Exception as e:
+        st.error(f"OpenAI API error: {e}")
+        return None
 
+# Main interaction
 if uploaded_file:
     transcript_text = uploaded_file.read().decode("utf-8")
     if st.button("Analyze & Generate Shorts"):
         with st.spinner("Generating viral shorts..."):
-            result = generate_shorts(transcript_text, result_count)
-        # Display
-        st.markdown("### Results")
-        st.text_area("### Viral Shorts Output", value=result, height=400)
+            result = generate_shorts(transcript_text, result_count, model)
+        if result:
+            st.markdown("### Results")
+            st.text_area("### Viral Shorts Output", value=result, height=400)
 
-        # Download as CSV
-        csv_bytes = result.encode("utf-8")
-        st.download_button(
-            label="Download as CSV",
-            data=csv_bytes,
-            file_name="shorts_output.csv",
-            mime="text/csv"
-        )
+            # Download CSV
+            csv_bytes = result.encode("utf-8")
+            st.download_button(
+                label="Download as CSV",
+                data=csv_bytes,
+                file_name="shorts_output.csv",
+                mime="text/csv"
+            )
 
-        # Download as Word-compatible RTF
-        rtf_lines = []
-        for line in result.split("\n"):
-            escaped = line.replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
-            rtf_lines.append(escaped + "\\par")
-        rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"
-        rtf_bytes = rtf_content.encode("utf-8")
-        st.download_button(
-            label="Download as Word (.doc)",
-            data=rtf_bytes,
-            file_name="shorts_output.doc",
-            mime="application/rtf"
-        )
+            # Download RTF as .doc
+            rtf_lines = []
+            for line in result.split("\n"):
+                escaped = line.replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
+                rtf_lines.append(escaped + "\\par")
+            rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"
+            st.download_button(
+                label="Download as Word (.doc)",
+                data=rtf_content.encode("utf-8"),
+                file_name="shorts_output.doc",
+                mime="application/rtf"
+            )

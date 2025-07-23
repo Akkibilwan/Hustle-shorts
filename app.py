@@ -1,7 +1,6 @@
 import streamlit as st
 import io
 from openai import OpenAI
-from docx import Document
 
 # ----------
 # Helper Functions
@@ -18,7 +17,7 @@ api_key = get_api_key()
 client = OpenAI(api_key=api_key)
 
 # System prompt
-SYSTEM_PROMPT = """
+epr_system = """
 You are an expert YouTube Shorts strategist and editor. Your specialty is converting long-form interviews, podcasts, or conversational transcripts into short-form, high-retention, share-worthy video clips (30–60 seconds).
 
 Your task is to analyze the provided transcript and identify segments that can be crafted into **viral YouTube Shorts**, using both:
@@ -45,22 +44,22 @@ Every short should ideally follow this structure:
 
 ---
 
-🔥 THEMES TO PRIORITIZE (in order of virality):
-- **Money & Career**
-- **Origins & Firsts**
-- **Emotional Vulnerability**
-- **Dark Reality / Industry Secrets**
-- **Actionable Advice**
-- **Stereotype-Breaking / Empowerment**
-- **Transformation**
+🔥 THEMES TO PRIORITIZE:
+- Money & Career
+- Origins & Firsts
+- Emotional Vulnerability
+- Dark Reality / Industry Secrets
+- Actionable Advice
+- Stereotype-Breaking / Empowerment
+- Transformation
 
 ---
 
 🛠 HOW TO CREATE FRANKEN-CLIPS:
 - Identify a strong **hook**.
 - Skip filler.
-- Find the **payoff** at a later timestamp.
-- Combine both in sequence logically.
+- Find the **payoff** later.
+- Stitch both logically.
 
 ---
 
@@ -73,14 +72,14 @@ Repeat for each Short:
 **Transcript for Editor:**
 | Timestamp | Speaker | Dialogue |
 |----------|---------|----------|
-| [hh:mm:ss,ms --> hh:mm:ss,ms] | [Name] | [Line] |
+| [hh:mm:ss,ms → hh:mm:ss,ms] | [Name] | [Line] |
 
 **Rationale for Virality:**  
 [Why this will perform]
 
 ---
 
-Now read the transcript and extract the most powerful clips in the above format.
+Now read the transcript and extract the specified number of unique potential shorts in the above format.
 """
 
 # App UI
@@ -98,6 +97,7 @@ model = st.selectbox("Choose model", ["gpt-4.5", "gpt-4", "gpt-3.5-turbo"], inde
 
 def generate_shorts(transcript: str, count: int):
     system = {"role": "system", "content": SYSTEM_PROMPT}
+    # Append count requirement
     user_content = transcript + f"\n\nPlease generate {count} unique potential shorts in the specified format."
     user = {"role": "user", "content": user_content}
     response = client.chat.completions.create(
@@ -125,16 +125,18 @@ if uploaded_file:
             file_name="shorts_output.csv",
             mime="text/csv"
         )
-        # Download as DOCX
-        doc = Document()
+
+        # Download as Word-compatible RTF
+        # Build RTF content to avoid python-docx import issues
+        rtf_lines = []
         for line in result.split("\n"):
-            doc.add_paragraph(line)
-        buf = io.BytesIO()
-        doc.save(buf)
-        buf.seek(0)
+            escaped = line.replace('\\', '\\\\').replace('{', '\{').replace('}', '\}')
+            rtf_lines.append(escaped + "\\par")
+        rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"
+        rtf_bytes = rtf_content.encode("utf-8")
         st.download_button(
-            label="Download as DOCX",
-            data=buf,
-            file_name="shorts_output.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            label="Download as Word (.doc)",
+            data=rtf_bytes,
+            file_name="shorts_output.doc",
+            mime="application/rtf"
         )

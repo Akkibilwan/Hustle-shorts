@@ -1,7 +1,6 @@
 import streamlit as st
 import io
 from openai import OpenAI
-from openai.error import InvalidRequestError
 
 # ----------
 # Helper Functions
@@ -125,11 +124,12 @@ def generate_shorts(transcript: str, count: int, model_name: str):
             max_tokens=1500
         )
         return resp.choices[0].message.content
-    except InvalidRequestError:
-        st.error(f"Model '{model_name}' not available. Please select a different model.")
-        return None
     except Exception as e:
-        st.error(f"OpenAI API error: {e}")
+        msg = str(e)
+        if "model" in msg and ("not exist" in msg or "not found" in msg):
+            st.error(f"Model '{model_name}' not available. Please select a different model.")
+        else:
+            st.error(f"OpenAI API error: {e}")
         return None
 
 # Main interaction

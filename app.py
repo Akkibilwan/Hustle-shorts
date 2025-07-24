@@ -2,6 +2,7 @@ import streamlit as st
 import io
 from openai import OpenAI, BadRequestError as OpenAIBadRequestError
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from google.api_core import exceptions as GoogleAPIErrors
 
 # ----------
@@ -165,7 +166,7 @@ def generate_shorts(transcript: str, count: int, model_name: str, provider_name:
                 model=model_name,
                 messages=[system, user],
                 temperature=0.7,
-                max_tokens=2048  # Increased max_tokens for potentially longer outputs
+                max_tokens=2048
             )
             return resp.choices[0].message.content
         except OpenAIBadRequestError as e:
@@ -182,15 +183,34 @@ def generate_shorts(transcript: str, count: int, model_name: str, provider_name:
         try:
             genai.configure(api_key=google_api_key)
             gen_model = genai.GenerativeModel(model_name)
-            # Gemini prefers a combined prompt
+            
+            # **FIX**: Set safety settings to be less restrictive
+            safety_settings = {
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            }
+
             full_prompt = f"{SYSTEM_PROMPT}\n\n{user_content}"
             resp = gen_model.generate_content(
                 full_prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.7,
                     max_output_tokens=2048
-                )
+                ),
+                safety_settings=safety_settings # Pass the safety settings
             )
+            
+            # **FIX**: Add robust check for empty response due to safety filters
+            if not resp.parts:
+                finish_reason = resp.candidates[0].finish_reason if resp.candidates else 'UNKNOWN'
+                if finish_reason == 2: # 2 corresponds to SAFETY
+                     st.error("The response was blocked by Google's safety filters. This can sometimes happen even with safe content. Please try again or slightly modify the transcript.")
+                else:
+                     st.error(f"The model returned an empty response. Finish Reason: {finish_reason}")
+                return None
+
             return resp.text
         except GoogleAPIErrors.InvalidArgument as e:
             st.error(f"Google AI API Error: {e}. Check your prompt or model configuration.")
@@ -229,7 +249,7 @@ if uploaded_file:
                 rtf_lines = []
                 for line in result.split("\n"):
                     # Basic RTF escaping
-                    escaped = line.replace('\\', '\\\\').replace('{', '\\\{').replace('}', '\\\}')
+                    escaped = line.replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
                     rtf_lines.append(escaped + "\\par")
                 rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"
                 st.download_button(

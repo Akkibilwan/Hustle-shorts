@@ -76,6 +76,25 @@ Your task is to analyze the provided transcript and identify segments that can b
 
 ---
 
+STRICT RULE: DO NOT REWRITE OR SUMMARIZE ANY DIALOGUE.
+
+You must:
+- Use the transcript lines exactly as they appear.
+- Do not shorten, reword, paraphrase, or compress the speaker’s sentences.
+- Keep all original punctuation, phrasing, and spelling.
+- Only include full dialogue blocks — no cherry-picking fragments from within a block unless they are timestamped separately.
+
+The output should allow a video editor to directly cut the clip using the given timestamps and script, without needing to interpret or reconstruct phrasing.
+
+---
+
+
+IMPORTANT:
+**You must provide at least an equal number of Franken-Clips as Direct Clips.**
+Do not prioritize Direct Clips over Franken-Clips. Treat both as equally valuable formats for storytelling.
+
+---
+
 🧠 BEFORE YOU START:
 **You must deeply read and understand the entire transcript** before suggesting any Shorts.
 - Consider context across the conversation.

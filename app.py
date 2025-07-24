@@ -1,35 +1,49 @@
 import streamlit as st
 import io
 from openai import OpenAI
+import google.generativeai as genai
 
 # ----------
 # Helper Functions
 # ----------
 
-def get_api_key() -> str:
-    """Retrieve the OpenAI API key from Streamlit secrets or environment."""
-    if "openai" in st.secrets and "api_key" in st.secrets["openai"]:
-        return st.secrets["openai"]["api_key"]
-    return ""
+def get_api_key(provider: str) -> str:
+    """Retrieve the API key for a given provider from Streamlit secrets."""
+    return st.secrets.get(provider, {}).get("api_key", "")
 
 # Initialize OpenAI client
-api_key = get_api_key()
-client = OpenAI(api_key=api_key)
+openai_key = get_api_key("openai")
+openai_client = OpenAI(api_key=openai_key)
+
+# Initialize Gemini (Google Generative AI) client
+gemini_key = get_api_key("gemini")
+genai.configure(api_key=gemini_key)
 
 @st.cache_data(show_spinner=False)
 def fetch_models():
-    """Fetch available GPT models, fallback to defaults on error."""
+    """Fetch available models from both OpenAI and Gemini, with sensible defaults."""
+    models = []
+    # OpenAI models
     try:
-        resp = client.models.list()
-        models = [m.id for m in resp.data if m.id.startswith("gpt-")]
-        # ensure at least gpt-4 and gpt-3.5-turbo
-        defaults = ["gpt-4", "gpt-3.5-turbo"]
-        for d in defaults:
-            if d not in models:
-                models.append(d)
-        return sorted(models)
+        resp = openai_client.models.list()
+        models += [m.id for m in resp.data if m.id.startswith("gpt-")]
     except Exception:
-        return ["gpt-4", "gpt-3.5-turbo"]
+        models += ["gpt-4", "gpt-3.5-turbo"]
+    # Gemini models
+    try:
+        gem_models = genai.chat.completions.list_models()
+        # list_models returns a dict with "models" key
+        models += [m for m in gem_models.get("models", [])]
+    except Exception:
+        models += ["chat-bison-001", "chat-bison-001-pro"]
+    # Deduplicate while preserving order
+    seen = set()
+    deduped = []
+    for m in models:
+        if m not in seen:
+            deduped.append(m)
+            seen.add(m)
+    return deduped
 
 # System prompt
 SYSTEM_PROMPT = """
@@ -111,26 +125,32 @@ result_count = st.slider("Number of Shorts to generate", min_value=1, max_value=
 available_models = fetch_models()
 model = st.selectbox("Choose model", available_models, index=0)
 
-# Generate function
+# Generation logic
 def generate_shorts(transcript: str, count: int, model_name: str):
-    system = {"role": "system", "content": SYSTEM_PROMPT}
-    user_content = transcript + f"\n\nPlease generate {count} unique potential shorts in the specified format."
-    user = {"role": "user", "content": user_content}
-    try:
-        resp = client.chat.completions.create(
+    # Build messages
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": transcript + f"\n\nPlease generate {count} unique potential shorts in the specified format."}
+    ]
+    # OpenAI path
+    if model_name.startswith("gpt-"):
+        resp = openai_client.chat.completions.create(
             model=model_name,
-            messages=[system, user],
+            messages=messages,
             temperature=0.7,
             max_tokens=1500
         )
         return resp.choices[0].message.content
-    except Exception as e:
-        msg = str(e)
-        if "model" in msg and ("not exist" in msg or "not found" in msg):
-            st.error(f"Model '{model_name}' not available. Please select a different model.")
-        else:
-            st.error(f"OpenAI API error: {e}")
-        return None
+    # Gemini path
+    else:
+        resp = genai.chat.completions.create(
+            model=model_name,
+            messages=messages
+        )
+        # Gemini client returns .choices or .candidates
+        if hasattr(resp, "choices"):
+            return resp.choices[0].message.content
+        return resp.candidates[0].content
 
 # Main interaction
 if uploaded_file:

@@ -1,4 +1,5 @@
 streamlit
 openai
 docx-python
+Gemini client for Google Generative AI
 google-generative-ai

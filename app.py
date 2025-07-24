@@ -1,8 +1,7 @@
 import streamlit as st
 import io
-from openai import OpenAI
+from openai import OpenAI, BadRequestError as OpenAIBadRequestError
 import google.generativeai as genai
-from openai import InvalidRequestError as OpenAIInvalidRequestError
 from google.api_core import exceptions as GoogleAPIErrors
 
 # ----------
@@ -169,7 +168,7 @@ def generate_shorts(transcript: str, count: int, model_name: str, provider_name:
                 max_tokens=2048  # Increased max_tokens for potentially longer outputs
             )
             return resp.choices[0].message.content
-        except OpenAIInvalidRequestError as e:
+        except OpenAIBadRequestError as e:
             st.error(f"OpenAI API Error: {e}. The selected model might not be available for your API key.")
             return None
         except Exception as e:
@@ -239,4 +238,3 @@ if uploaded_file:
                     file_name="shorts_output.doc",
                     mime="application/rtf"
                 )
-

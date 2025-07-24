@@ -26,37 +26,44 @@ def get_google_api_key() -> str:
 @st.cache_data(show_spinner=False)
 def fetch_openai_models(api_key: str):
     """Fetch available GPT models, fallback to defaults on error."""
+    # Fallback list
+    default_models = ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]
     if not api_key:
-        return ["gpt-4", "gpt-3.5-turbo"]
+        return default_models
     try:
         client = OpenAI(api_key=api_key)
         resp = client.models.list()
         models = [m.id for m in resp.data if m.id.startswith("gpt-")]
-        # Ensure at least gpt-4 and gpt-3.5-turbo are present
-        defaults = ["gpt-4", "gpt-3.5-turbo"]
-        for d in defaults:
+        # Ensure defaults are present
+        for d in default_models:
             if d not in models:
                 models.append(d)
-        return sorted(models)
+        return sorted(list(set(models)))
     except Exception:
         st.error("Could not fetch OpenAI models. Using default list.")
-        return ["gpt-4", "gpt-3.5-turbo"]
+        return default_models
 
 @st.cache_data(show_spinner=False)
 def fetch_gemini_models(api_key: str):
     """Fetch available Gemini models, fallback to defaults on error."""
+    # Updated fallback list with more modern models
+    default_models = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-pro"]
     if not api_key:
-        return ["gemini-pro"]
+        return default_models
     try:
         genai.configure(api_key=api_key)
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name]
-        model_ids = [m.split('/')[-1] for m in models] # Extract model ID from name
+        model_ids = [m.split('/')[-1] for m in models]
         if not model_ids:
-            return ["gemini-pro"]
-        return sorted(model_ids)
+            return default_models
+        # Ensure defaults are present
+        for d in default_models:
+            if d not in model_ids:
+                model_ids.append(d)
+        return sorted(list(set(model_ids)))
     except Exception:
         st.error("Could not fetch Gemini models. Using default list.")
-        return ["gemini-pro"]
+        return default_models
 
 
 # --- System Prompt ---
@@ -137,17 +144,23 @@ uploaded_file = st.file_uploader("Upload transcript (.srt or .txt)", type=["srt"
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    provider = st.selectbox("Choose AI Provider", ["OpenAI", "Google"])
+    provider = st.selectbox("Choose AI Provider", ["Google", "OpenAI"])
 with col2:
     result_count = st.slider("Number of Shorts to generate", min_value=1, max_value=20, value=5)
 with col3:
     if provider == "OpenAI":
         available_models = fetch_openai_models(openai_api_key)
-        model = st.selectbox("Choose model", available_models, index=0 if "gpt-4" in available_models else 0)
+        model = st.selectbox("Choose model", available_models, index=0)
     else: # Google
         available_models = fetch_gemini_models(google_api_key)
-        model = st.selectbox("Choose model", available_models, index=0 if "gemini-pro" in available_models else 0)
+        model = st.selectbox("Choose model", available_models, index=0)
 
+# --- Proactive Guidance ---
+st.info(
+    "**💡 Tip:** If you encounter a 'response was blocked' error, especially with Google's models, "
+    "try switching to a different model (like `gemini-1.5-flash`) or changing the AI Provider to OpenAI. "
+    "Different models have different safety systems."
+)
 
 # --- Generation Logic ---
 def generate_shorts(transcript: str, count: int, model_name: str, provider_name: str):
@@ -166,7 +179,7 @@ def generate_shorts(transcript: str, count: int, model_name: str, provider_name:
                 model=model_name,
                 messages=[system, user],
                 temperature=0.7,
-                max_tokens=2048
+                max_tokens=3000
             )
             return resp.choices[0].message.content
         except OpenAIBadRequestError as e:
@@ -184,7 +197,6 @@ def generate_shorts(transcript: str, count: int, model_name: str, provider_name:
             genai.configure(api_key=google_api_key)
             gen_model = genai.GenerativeModel(model_name)
             
-            # **FIX**: Set safety settings to be less restrictive
             safety_settings = {
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -197,18 +209,20 @@ def generate_shorts(transcript: str, count: int, model_name: str, provider_name:
                 full_prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.7,
-                    max_output_tokens=2048
+                    max_output_tokens=3000
                 ),
-                safety_settings=safety_settings # Pass the safety settings
+                safety_settings=safety_settings
             )
             
-            # **FIX**: Add robust check for empty response due to safety filters
             if not resp.parts:
-                finish_reason = resp.candidates[0].finish_reason if resp.candidates else 'UNKNOWN'
-                if finish_reason == 2: # 2 corresponds to SAFETY
-                     st.error("The response was blocked by Google's safety filters. This can sometimes happen even with safe content. Please try again or slightly modify the transcript.")
-                else:
-                     st.error(f"The model returned an empty response. Finish Reason: {finish_reason}")
+                try:
+                    finish_reason = resp.candidates[0].finish_reason if resp.candidates else 'UNKNOWN'
+                    if finish_reason == 2: # SAFETY
+                         st.error("The response was blocked by Google's safety filters. This can sometimes happen even with safe content. **Please try a different model (like Gemini 1.5 Flash) or switch the AI Provider to OpenAI.**")
+                    else:
+                         st.error(f"The model returned an empty response. Finish Reason: {finish_reason}")
+                except IndexError:
+                    st.error("The model returned an empty response with no details. This may be due to a safety block or an issue with the prompt.")
                 return None
 
             return resp.text
@@ -235,7 +249,6 @@ if uploaded_file:
             # Download buttons
             col_dl1, col_dl2 = st.columns(2)
             with col_dl1:
-                # Download as Markdown (.md) which is more robust than CSV for this format
                 md_bytes = result.encode("utf-8")
                 st.download_button(
                     label="Download as Markdown (.md)",
@@ -245,10 +258,8 @@ if uploaded_file:
                 )
             
             with col_dl2:
-                # Download RTF as .doc
                 rtf_lines = []
                 for line in result.split("\n"):
-                    # Basic RTF escaping
                     escaped = line.replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
                     rtf_lines.append(escaped + "\\par")
                 rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"

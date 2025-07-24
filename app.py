@@ -1,134 +1,242 @@
 import streamlit as st
 import io
 from openai import OpenAI
-
-# Attempt to import Gemini (Google Generative AI)
-gemini_enabled = False
-try:
-    import google.generativeai as genai
-    gemini_enabled = True
-except ImportError:
-    genai = None
+import google.generativeai as genai
+from openai import InvalidRequestError as OpenAIInvalidRequestError
+from google.api_core import exceptions as GoogleAPIErrors
 
 # ----------
 # Helper Functions
 # ----------
 
-def get_api_key(provider: str) -> str:
-    """Retrieve the API key for a given provider from Streamlit secrets."""
-    return st.secrets.get(provider, {}).get("api_key", "")
+def get_openai_api_key() -> str:
+    """Retrieve the OpenAI API key from Streamlit secrets."""
+    if "openai" in st.secrets and "api_key" in st.secrets["openai"]:
+        return st.secrets["openai"]["api_key"]
+    return ""
 
-# Initialize OpenAI client
-openai_key = get_api_key("openai")
-openai_client = OpenAI(api_key=openai_key)
+def get_google_api_key() -> str:
+    """Retrieve the Google AI API key from Streamlit secrets."""
+    if "google_ai" in st.secrets and "api_key" in st.secrets["google_ai"]:
+        return st.secrets["google_ai"]["api_key"]
+    return ""
 
-# Initialize Gemini client if available
-gemini_key = get_api_key("gemini")
-if gemini_enabled:
-    genai.configure(api_key=gemini_key)
+# --- Model Fetching ---
 
 @st.cache_data(show_spinner=False)
-def fetch_models():
-    """Fetch available models from both OpenAI and Gemini, with sensible defaults."""
-    models = []
-    # OpenAI models
+def fetch_openai_models(api_key: str):
+    """Fetch available GPT models, fallback to defaults on error."""
+    if not api_key:
+        return ["gpt-4", "gpt-3.5-turbo"]
     try:
-        resp = openai_client.models.list()
-        models += [m.id for m in resp.data if m.id.startswith("gpt-")]
+        client = OpenAI(api_key=api_key)
+        resp = client.models.list()
+        models = [m.id for m in resp.data if m.id.startswith("gpt-")]
+        # Ensure at least gpt-4 and gpt-3.5-turbo are present
+        defaults = ["gpt-4", "gpt-3.5-turbo"]
+        for d in defaults:
+            if d not in models:
+                models.append(d)
+        return sorted(models)
     except Exception:
-        models += ["gpt-4", "gpt-3.5-turbo"]
-    # Gemini models
-    if gemini_enabled:
-        try:
-            gem_models = genai.chat.completions.list_models()
-            models += gem_models.get("models", [])
-        except Exception:
-            models += ["chat-bison-001", "chat-bison-001-pro"]
-    # Deduplicate while preserving order
-    seen = set()
-    deduped = []
-    for m in models:
-        if m not in seen:
-            deduped.append(m)
-            seen.add(m)
-    return deduped
+        st.error("Could not fetch OpenAI models. Using default list.")
+        return ["gpt-4", "gpt-3.5-turbo"]
 
-# System prompt
+@st.cache_data(show_spinner=False)
+def fetch_gemini_models(api_key: str):
+    """Fetch available Gemini models, fallback to defaults on error."""
+    if not api_key:
+        return ["gemini-pro"]
+    try:
+        genai.configure(api_key=api_key)
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name]
+        model_ids = [m.split('/')[-1] for m in models] # Extract model ID from name
+        if not model_ids:
+            return ["gemini-pro"]
+        return sorted(model_ids)
+    except Exception:
+        st.error("Could not fetch Gemini models. Using default list.")
+        return ["gemini-pro"]
+
+
+# --- System Prompt ---
 SYSTEM_PROMPT = """
 You are an expert YouTube Shorts strategist and editor. Your specialty is converting long-form interviews, podcasts, or conversational transcripts into short-form, high-retention, share-worthy video clips (30–60 seconds).
 
-... [prompt unchanged] ...
+Your task is to analyze the provided transcript and identify segments that can be crafted into **viral YouTube Shorts**, using both:
+1. **Direct Clips** — continuous timestamps that naturally tell a compelling story.
+2. **Franken-Clips** — stitched clips where the hook and payoff occur at different timestamps, but when combined form a powerful narrative.
+
+---
+
+🧠 BEFORE YOU START:
+**You must deeply read and understand the entire transcript** before suggesting any Shorts.
+- Consider context across the conversation.
+- Prioritize Shorts that carry emotional weight, insight, or surprise.
+- Do NOT simply return lines based on keyword matches — the short must **make narrative sense**, follow a **viral arc**, and be **audience-relevant**.
+
+---
+
+🎯 VIRAL SHORT STRUCTURE (THE VIRAL ARC):
+Every short should ideally follow this structure:
+
+- **Hook (0–3s):** Shocking number, bold statement, emotional truth, direct question, or stereotype-breaking comment.
+- **Context (3–10s):** Sets up the story with a bit of background.
+- **Insight (10–30s):** The moment of realization, advice, or payoff.
+- **Takeaway (30–60s):** A quote, truth, or punchline that the audience remembers or shares.
+
+---
+
+🔥 THEMES TO PRIORITIZE:
+- Money & Career
+- Origins & Firsts
+- Emotional Vulnerability
+- Dark Reality / Industry Secrets
+- Actionable Advice
+- Stereotype-Breaking / Empowerment
+- Transformation
+
+---
+
+🛠 HOW TO CREATE FRANKEN-CLIPS:
+- Identify a strong **hook**.
+- Skip filler.
+- Find the **payoff** later.
+- Stitch both logically.
+
+---
+
+📦 OUTPUT FORMAT:
+Repeat for each Short:
+**Potential Short Title:** [Title with emoji]  
+**Estimated Duration:** [e.g., 45 seconds]  
+**Type:** [Direct Clip / Franken-Clip]
+
+**Transcript for Editor:**
+| Timestamp | Speaker | Dialogue |
+|----------|---------|----------|
+| [hh:mm:ss,ms → hh:mm:ss,ms] | [Name] | [Line] |
+
+**Rationale for Virality:** [Why this will perform]
+
+---
+
+Now read the transcript and extract the specified number of unique potential shorts in the above format.
 """
 
-# App UI
+# --- App UI ---
 st.set_page_config(page_title="YouTube Shorts Extractor", layout="wide")
 st.title("📽️ Viral YouTube Shorts Extractor")
 
-# File upload
+# --- API Key Initialization ---
+openai_api_key = get_openai_api_key()
+google_api_key = get_google_api_key()
+
+# --- UI Controls ---
 uploaded_file = st.file_uploader("Upload transcript (.srt or .txt)", type=["srt", "txt"])
 
-# Number of Shorts
-result_count = st.slider("Number of Shorts to generate", min_value=1, max_value=20, value=5)
+col1, col2, col3 = st.columns(3)
+with col1:
+    provider = st.selectbox("Choose AI Provider", ["OpenAI", "Google"])
+with col2:
+    result_count = st.slider("Number of Shorts to generate", min_value=1, max_value=20, value=5)
+with col3:
+    if provider == "OpenAI":
+        available_models = fetch_openai_models(openai_api_key)
+        model = st.selectbox("Choose model", available_models, index=0 if "gpt-4" in available_models else 0)
+    else: # Google
+        available_models = fetch_gemini_models(google_api_key)
+        model = st.selectbox("Choose model", available_models, index=0 if "gemini-pro" in available_models else 0)
 
-# Model selection
-available_models = fetch_models()
-model = st.selectbox("Choose model", available_models, index=0)
 
-# Generation logic
-def generate_shorts(transcript: str, count: int, model_name: str):
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": transcript + f"\n\nPlease generate {count} unique potential shorts in the specified format."}
-    ]
-    if model_name.startswith("gpt-"):
-        resp = openai_client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=1500
-        )
-        return resp.choices[0].message.content
-    elif gemini_enabled:
-        resp = genai.chat.completions.create(
-            model=model_name,
-            messages=messages
-        )
-        # Gemini response
-        if hasattr(resp, "choices"):
+# --- Generation Logic ---
+def generate_shorts(transcript: str, count: int, model_name: str, provider_name: str):
+    """Generates shorts using the selected provider's API."""
+    user_content = transcript + f"\n\nPlease generate {count} unique potential shorts in the specified format."
+
+    if provider_name == "OpenAI":
+        if not openai_api_key:
+            st.error("OpenAI API key is not set. Please add it to your Streamlit secrets.")
+            return None
+        try:
+            client = OpenAI(api_key=openai_api_key)
+            system = {"role": "system", "content": SYSTEM_PROMPT}
+            user = {"role": "user", "content": user_content}
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[system, user],
+                temperature=0.7,
+                max_tokens=2048  # Increased max_tokens for potentially longer outputs
+            )
             return resp.choices[0].message.content
-        return resp.candidates[0].content
-    else:
-        st.error(f"Gemini integration not available. Please select an OpenAI model.")
-        return None
+        except OpenAIInvalidRequestError as e:
+            st.error(f"OpenAI API Error: {e}. The selected model might not be available for your API key.")
+            return None
+        except Exception as e:
+            st.error(f"An unexpected OpenAI API error occurred: {e}")
+            return None
 
-# Main interaction
+    elif provider_name == "Google":
+        if not google_api_key:
+            st.error("Google AI API key is not set. Please add it to your Streamlit secrets.")
+            return None
+        try:
+            genai.configure(api_key=google_api_key)
+            gen_model = genai.GenerativeModel(model_name)
+            # Gemini prefers a combined prompt
+            full_prompt = f"{SYSTEM_PROMPT}\n\n{user_content}"
+            resp = gen_model.generate_content(
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.7,
+                    max_output_tokens=2048
+                )
+            )
+            return resp.text
+        except GoogleAPIErrors.InvalidArgument as e:
+            st.error(f"Google AI API Error: {e}. Check your prompt or model configuration.")
+            return None
+        except Exception as e:
+            st.error(f"An unexpected Google AI API error occurred: {e}")
+            return None
+    return None
+
+
+# --- Main Interaction Logic ---
 if uploaded_file:
     transcript_text = uploaded_file.read().decode("utf-8")
-    if st.button("Analyze & Generate Shorts"):
-        with st.spinner("Generating viral shorts..."):
-            result = generate_shorts(transcript_text, result_count, model)
+    if st.button(f"Analyze & Generate Shorts with {provider}"):
+        with st.spinner(f"Generating viral shorts using {provider}'s {model}..."):
+            result = generate_shorts(transcript_text, result_count, model, provider)
+        
         if result:
             st.markdown("### Results")
-            st.text_area("### Viral Shorts Output", value=result, height=400)
+            st.text_area("Viral Shorts Output", value=result, height=500)
 
-            # Download CSV
-            csv_bytes = result.encode("utf-8")
-            st.download_button(
-                label="Download as CSV",
-                data=csv_bytes,
-                file_name="shorts_output.csv",
-                mime="text/csv"
-            )
+            # Download buttons
+            col_dl1, col_dl2 = st.columns(2)
+            with col_dl1:
+                # Download as Markdown (.md) which is more robust than CSV for this format
+                md_bytes = result.encode("utf-8")
+                st.download_button(
+                    label="Download as Markdown (.md)",
+                    data=md_bytes,
+                    file_name="shorts_output.md",
+                    mime="text/markdown"
+                )
+            
+            with col_dl2:
+                # Download RTF as .doc
+                rtf_lines = []
+                for line in result.split("\n"):
+                    # Basic RTF escaping
+                    escaped = line.replace('\\', '\\\\').replace('{', '\\\{').replace('}', '\\\}')
+                    rtf_lines.append(escaped + "\\par")
+                rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"
+                st.download_button(
+                    label="Download as Word (.doc)",
+                    data=rtf_content.encode("utf-8"),
+                    file_name="shorts_output.doc",
+                    mime="application/rtf"
+                )
 
-            # Download RTF as .doc
-            rtf_lines = []
-            for line in result.split("\n"):
-                escaped = line.replace('\\', '\\\\').replace('{', '\\\{').replace('}', '\\\}')
-                rtf_lines.append(escaped + "\\par")
-            rtf_content = "{\\rtf1\\ansi\n" + "\n".join(rtf_lines) + "\n}"
-            st.download_button(
-                label="Download as Word (.doc)",
-                data=rtf_content.encode("utf-8"),
-                file_name="shorts_output.doc",
-                mime="application/rtf"
-            )

@@ -117,17 +117,16 @@ You must include an equal number of Franken-Clips and Direct Clips.
 
 ---
 
-📦 OUTPUT FORMAT (repeat for each Short):
+TRICT OUTPUT FORMAT (Use the combined timestamps you created):
 
-Potential Short Title: [Catchy title with emoji if helpful]  
-Estimated Duration: [e.g., 42 seconds]  
-Type: [Direct Clip / Franken-Clip]
+**Short Title:** [🚀 Viral Title with an Emoji]
+**Theme Category:** [Vulnerability/Money/Transformation/Industry/Advice/Norms]
+**Number of Segments:** [3 or 4]
 
-Transcript for Editor:
-| Timestamp | Speaker | Dialogue |
-|----------|---------|----------|
-| 00:00:00,000 --> 00:00:04,000 | Speaker Name | Verbatim transcript line here |
-| ... | ... | ... |
+**Selected Segments:**
+SEGMENT 1: 00:01:23,450 --> 00:01:28,100 - This is my hook, created by merging lines 25-29. [HOOK]
+SEGMENT 2: 00:08:45,100 --> 00:08:52,500 - This builds the story, created from lines 150-155. [BUILD]
+SEGMENT 3: 00:25:10,300 --> 00:25:19,900 - The amazing payoff, created from lines 412-418. [PAYOFF]
 
 Rationale for Virality:  
 [Brief explanation — why this short works. Don’t skip this.]
